@@ -27,7 +27,7 @@ library(stringr)
 # ------------------------------
 # Define working directory (server or local environment)
 #wdir <- "/home/mchapman/masters_project" #server
-wdir <- "C:/Users/mchapman/Documents/masters_project" #local
+wdir <- "C:/Users/mchap/OneDrive/Documents/masters_project" #local
 setwd(wdir)
 
 # Define main directories for model outputs, figures, and data
@@ -670,3 +670,181 @@ range_plot <- ggplot(range_df,
   theme(legend.position = "none")
 
 ggsave(file.path(figure_dir, "range_plot.png"))
+
+# ============================================================
+# 9. ENDEMIC SPECIES
+# ============================================================
+
+endemic_df <- read.csv(file.path(results_dir, "working_df3.csv"))
+
+# Recode risk categories and get counts by scenario and endemic status
+plot_df <- endemic_df %>%
+  mutate(risk = ifelse(risk == "dispersal_only", "No Risk", risk),
+         endemic_status = ifelse(cubanendemic == "y", "Endemic", "Non-endemic"),
+         scenario = case_when(
+           scenario == "ssp1" ~ "SSP1",
+           scenario == "ssp3" ~ "SSP3",
+           scenario == "ssp5" ~ "SSP5",
+           TRUE ~ toupper(scenario)
+         )) %>%
+  group_by(scenario, endemic_status, risk) %>%
+  summarise(n = n(), .groups = "drop")
+
+# Set risk factor order for consistent stacking order
+plot_df$risk <- factor(plot_df$risk, 
+                       levels = c("Highly Vulnerable", "Vulnerable", 
+                                  "Potential to Persist", "Theoretical Risk", 
+                                  "No Risk"))
+
+plot_df <- plot_df %>%
+  complete(scenario, endemic_status, risk, fill = list(n = 0))
+
+risk_colors <- c("Highly Vulnerable"     = "#E64B35",  
+                 "Vulnerable"           = "#F39B7F",  
+                 "Potential to Persist" = "#00A087",  
+                 "Theoretical Risk"     = "#4DBBD5",  
+                 "No Risk"              = "#3C5488")  
+
+# Plot
+endemic_plot <- ggplot(plot_df, aes(x = endemic_status, y = n, fill = risk)) +
+  scale_fill_manual(values = risk_colors, drop = FALSE) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~ scenario) +
+  labs(x = "Endemic Status", 
+       y = "Number of Species", 
+       fill = "Risk Classification") +
+  theme_bw()
+
+#also need to get some numbers for written section of results
+risk_pct <- plot_df %>%
+  group_by(scenario, endemic_status) %>%
+  mutate(percent = round(100 * n / sum(n), 1)) %>%
+  ungroup() %>%
+  arrange(scenario, risk, endemic_status)
+
+at_risk_summary <- endemic_df %>%
+  mutate(risk = ifelse(risk == "dispersal_only", "No Risk", risk),
+         endemic_status = ifelse(cubanendemic == "y", "Endemic", "Non-endemic"),
+         scenario = case_when(
+           scenario == "ssp1" ~ "SSP1",
+           scenario == "ssp3" ~ "SSP3",
+           scenario == "ssp5" ~ "SSP5",
+           TRUE ~ toupper(scenario)
+         ),
+         at_risk = risk %in% c("Highly Vulnerable", "Vulnerable")) %>%
+  group_by(scenario, endemic_status) %>%
+  summarise(n_total = n(),
+            n_at_risk = sum(at_risk),
+            pct_at_risk = round(100 * n_at_risk / n_total, 1),
+            .groups = "drop")
+
+
+#save plot
+ggsave(
+  filename = file.path(figure_dir, "endemic_plot.png"),
+  plot = endemic_plot,
+  width = 8,
+  height = 6,
+  dpi = 600
+)
+
+#test
+for (s in unique(endemic_df$scenario)) {
+  cat("\n---", toupper(s), "---\n")
+  sub <- endemic_df %>% 
+    mutate(endemic_status = ifelse(cubanendemic == "y", "Endemic", "Non-endemic"),
+           hv_status = ifelse(risk == "Highly Vulnerable", "Highly Vulnerable", "Not Highly Vulnerable")) %>%
+    filter(scenario == s)
+  
+  tbl <- table(sub$endemic_status, sub$hv_status)
+  print(tbl)
+  print(chisq.test(tbl))
+}
+
+# ============================================================
+# 10. RESULTS BY TAXA
+# ============================================================
+
+range_df <- read.csv(file.path(results_dir, "range_df.csv"))
+
+#combine with results df to add order
+order_range_df <- range_df %>%
+  rename(species = species_name) %>%
+  inner_join(results_df %>% select(species, order, cubanendemic), by = "species") %>%
+  mutate(scenario = case_when(
+    scenario == 1 ~ "SSP1",
+    scenario == 2 ~ "SSP3",
+    scenario == 3 ~ "SSP5",
+    TRUE ~ as.character(scenario)
+  ))
+
+# Identify orders with at least 2 unique species overall
+orders_to_keep <- order_range_df %>%
+  distinct(species, order) %>%
+  count(order) %>%
+  filter(n >= 2) %>%
+  pull(order)
+
+order_range_df <- order_range_df %>%
+  filter(order %in% orders_to_keep)
+
+# Order by median range change for readability (optional but recommended)
+order_levels <- order_range_df %>%
+  group_by(order) %>%
+  summarise(med = median(range_change)) %>%
+  arrange(med) %>%
+  pull(order)
+
+order_range_df$order <- factor(order_range_df$order, levels = order_levels)
+
+# Build labels combining order name and n, in the same order as order_levels
+order_n <- order_range_df %>%
+  distinct(species, order) %>%
+  count(order, name = "n_species")
+
+label_lookup <- setNames(
+  paste0(order_n$order, "\n(n=", order_n$n_species, ")"),
+  order_n$order
+)
+
+order_labels <- label_lookup[levels(order_range_df$order)]
+
+# Plot
+sp_plot <- ggplot(order_range_df, aes(x = order, y = range_change, fill = scenario)) +
+  scale_fill_npg() +
+  geom_boxplot(outlier.alpha = 0.4) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  facet_wrap(~ scenario) +
+  scale_x_discrete(labels = order_labels) +
+  labs(x = "Order", 
+       y = "Range Change (%)") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        legend.position = "none",
+        axis.title = element_text(size = 14))
+
+#look at exact numbers
+order_summary <- order_range_df %>%
+  group_by(scenario, order) %>%
+  summarise(
+    n_species = n(),
+    mean_change = mean(range_change, na.rm = TRUE),
+    median_change = median(range_change, na.rm = TRUE),
+    sd_change = sd(range_change, na.rm = TRUE),
+    n_increasing = sum(range_change > 0, na.rm = TRUE),
+    pct_increasing = round(100 * n_increasing / n_species, 1),
+    .groups = "drop"
+  ) %>%
+  arrange(scenario, median_change)
+
+low_count <- order_summary %>% arrange(n_species)
+
+#save plot
+ggsave(
+  filename = file.path(figure_dir, "order_boxplot.png"),
+  plot = sp_plot,
+  width = 10,
+  height = 6,
+  dpi = 600
+)
+

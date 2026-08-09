@@ -353,9 +353,9 @@ for (scenario in seq_along(scenario_names)) {
 global_predict <- read.csv(file.path(predict_dir,"present_predict_gbif.csv"))
 global_df <- read.csv(file.path(occ_dir, "global_df.csv"))
 
-ssp1 <- read.csv(file.path(predict_dir, "ssp126_predict_table_2.csv"))
-ssp3 <- read.csv(file.path(predict_dir, "ssp370_predict_table_2.csv"))
-ssp5 <- read.csv(file.path(predict_dir, "ssp585_predict_table_2.csv"))
+ssp1 <- read.csv(file.path(predict_dir, "ssp126_predict_table.csv"))
+ssp3 <- read.csv(file.path(predict_dir, "ssp370_predict_table.csv"))
+ssp5 <- read.csv(file.path(predict_dir, "ssp585_predict_table.csv"))
 
 #list future scenarios
 scenarios <- list(
@@ -496,7 +496,7 @@ write.csv(exposure_df, file.path(results_dir, "exposure_df2.csv")) #save results
 # ==============================================================
 
 #read in resutls
-exposure_df <- read.csv(file.path(results_dir, "exposure_df.csv"))
+exposure_df <- read.csv(file.path(results_dir, "exposure_df2.csv"))
 
 #should only be these columns but lets make sure
 exposure_df <- exposure_df %>% select(species_name, scenario, variable, mean_pres, sd_pres, mean_fut, exposure, sensitivity)
@@ -841,6 +841,8 @@ df <- df %>% select(family, order, class, species, scenario, variable, exposure,
                     total_occurrences, mean_auc, mean_tss, cubanendemic, check, check_s)
 
 #add 3rd
+distance_df <- distance_df %>%
+  mutate(species = gsub(" ", "_", species))
 df1 <- inner_join(distance_df, df , by = c("species", "scenario"))
 head(df1)
 
@@ -856,21 +858,28 @@ df_summary <- df1 %>%
     .groups = "drop"
   )
 
+#make new df
+new_df <- inner_join(working_df, df_summary , by = "species")
+
 #which species are vulnerable or highly vulnerable?
-venn_data <- df_summary %>%
+venn_data <- new_df %>%
   mutate(
-    combo = case_when(
-      exposure == 1 & sensitivity == 1 & dispersal == 1 ~ "all_three",
-      exposure == 1 & sensitivity == 1 ~ "exp_sens",
-      exposure == 1 & dispersal == 1 ~ "exp_disp",
-      sensitivity == 1 & dispersal == 1 ~ "sens_disp",
+    risk = case_when(
+      exposure == 1 & sensitivity == 1 & dispersal == 1 ~ "Highly Vulnerable",
+      exposure == 1 & sensitivity == 1 ~ "Vulnerable",
+      exposure == 1 & dispersal == 1 ~ "Potential to Persist",
+      sensitivity == 1 & dispersal == 1 ~ "Theoretical Risk",
       exposure == 1 ~ "exposure_only",
       sensitivity == 1 ~ "sensitivity_only",
       dispersal == 1 ~ "dispersal_only",
       TRUE ~ "none"
     ))
 
-sp_vulnerable <- venn_data %>% filter(combo == "all_three"|combo == "exp_sens")
+#save new working df
+write.csv(venn_data, file.path(results_dir, "working_df3.csv")) #save df
+
+#get list of vulnerable species
+sp_vulnerable <- venn_data %>% filter(risk == "all_three"|risk == "exp_sens")
 
 sp_vulnerable <- sp_vulnerable %>%
   left_join(
@@ -881,7 +890,7 @@ sp_vulnerable <- sp_vulnerable %>%
 
 #get numbers
 venn_counts <- venn_data %>%
-  count(scenario, combo)
+  count(scenario, risk)
 
 # ==============================================================
 # 11. CHANGE IN HABITAT SUITABILITY
